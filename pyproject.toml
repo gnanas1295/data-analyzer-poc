@@ -1,0 +1,24 @@
+[project]
+name = "data-analyzer-poc"
+version = "0.1.0"
+description = "A Proof-of-Concept for Vrai's final interview, demonstrating a simulation data analysis service using Python, FastAPI, and Azure."
+authors = [
+    {name = "Gnanasekar Mani",email = "gnanas1295@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi (>=0.116.1,<0.117.0)",
+    "uvicorn (>=0.35.0,<0.36.0)",
+    "numpy (>=2.3.2,<3.0.0)"
+]
+
+[tool.poetry]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.4.1"
+httpx = "^0.28.1"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
