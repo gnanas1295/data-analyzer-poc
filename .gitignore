@@ -135,7 +135,9 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
+.env.*
+.env/
+.env.local
 .envrc
 .venv
 env/
@@ -190,6 +192,8 @@ cython_debug/
 
 # Ruff stuff:
 .ruff_cache/
+
+TROUBLESHOOTING.md
 
 # PyPI configuration file
 .pypirc
