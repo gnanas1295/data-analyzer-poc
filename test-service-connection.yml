@@ -1,0 +1,45 @@
+# Service Connection Validation Script
+# Run this in Azure DevOps to verify your service connection
+
+# This is a minimal pipeline to test service connection
+# Save as test-service-connection.yml and run it manually
+
+trigger: none # Manual trigger only
+
+variables:
+- name: azureServiceConnection
+  value: 'AzureServiceConnection'  # Update this to match your service connection name
+
+stages:
+- stage: TestConnection
+  displayName: 'Test Azure Service Connection'
+  jobs:
+  - job: TestJob
+    displayName: 'Test Service Connection'
+    pool:
+      vmImage: 'ubuntu-latest'
+    
+    steps:
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          echo "🔧 Testing Azure Service Connection..."
+          echo "Connection Name: $(azureServiceConnection)"
+          echo "Current User: $(az account show --query user.name --output tsv)"
+          echo "Subscription: $(az account show --query name --output tsv)"
+          echo "Subscription ID: $(az account show --query id --output tsv)"
+          echo "✅ Service connection is working!"
+          
+          # Test permissions by listing resource groups
+          echo "📋 Testing permissions - listing resource groups:"
+          az group list --output table --query "[].{Name:name, Location:location}" || echo "❌ No permission to list resource groups"
+          
+          # Test if we can create a resource group (dry run)
+          echo "🧪 Testing resource group creation (dry run):"
+          az group create --name "test-permissions-rg" --location "East US" --dry-run || echo "❌ No permission to create resource groups"
+          
+          echo "🎉 Service connection test completed!"
+      displayName: 'Test Azure CLI Connection'
