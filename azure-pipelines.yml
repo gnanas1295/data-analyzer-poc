@@ -24,6 +24,8 @@ variables:
   value: $[lower(format('vrai-cosmos-{0}', variables['environment']))]
 - name: environment
   value: $[replace(replace(variables['Build.SourceBranch'], 'refs/heads/main', 'prod'), 'refs/heads/develop', 'dev')]
+- name: azureServiceConnection
+  value: 'AzureServiceConnection'  # Update this to match your service connection name
 
 stages:
 - stage: Build
@@ -128,7 +130,7 @@ stages:
 
           - task: AzureCLI@2
             inputs:
-              azureSubscription: 'Azure Service Connection'
+              azureSubscription: '$(azureServiceConnection)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
@@ -236,7 +238,7 @@ stages:
 
           - task: AzureCLI@2
             inputs:
-              azureSubscription: 'Azure Service Connection'
+              azureSubscription: '$(azureServiceConnection)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |

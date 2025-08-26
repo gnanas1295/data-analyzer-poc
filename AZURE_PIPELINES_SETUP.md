@@ -1,6 +1,21 @@
 # 🚀 Azure Pipelines Setup Guide for VRAI Data Analyzer
 
-## 📋 Overview
+## � Quick Fix for Service Connection Error
+
+**If you see this error:**
+```
+Job DeployInfra: Step deployInfra input azureSubscription references service connection Azure Service Connection which could not be found.
+```
+
+**Solution:**
+1. **Create the service connection first** (see Step 3 below)
+2. **Name it exactly**: `AzureServiceConnection` (no spaces)
+3. **Grant pipeline access** when creating the connection
+4. If you use a different name, update the `azureServiceConnection` variable in `azure-pipelines.yml`
+
+---
+
+## �📋 Overview
 
 This guide will help you set up Azure Pipelines to automatically build, test, and deploy your FastAPI application to Azure App Service whenever you push code to your repository.
 
@@ -44,19 +59,54 @@ The pipeline will automatically create and manage:
 
 ### Step 3: Create Azure Service Connection
 
-1. In Azure DevOps, go to **Project Settings** (bottom left)
+**IMPORTANT**: This is the most critical step. The pipeline cannot run without a proper service connection.
+
+1. In Azure DevOps, go to **Project Settings** (bottom left corner)
 2. Under **Pipelines**, click **Service connections**
-3. Click **Create service connection**
+3. Click **+ Create service connection**
 4. Select **Azure Resource Manager**
-5. Choose **Service principal (automatic)**
+5. Choose **Service principal (automatic)** (preferred for school accounts)
+
+**For Service Principal (Automatic):**
 6. Configure the connection:
-   - **Scope level**: Subscription
+   - **Scope level**: **Subscription**
    - **Subscription**: Select your school Azure subscription
-   - **Resource group**: Leave empty (pipeline will create it)
-   - **Service connection name**: `Azure Service Connection`
+   - **Resource group**: **Leave empty** (pipeline will create it)
+   - **Service connection name**: **`AzureServiceConnection`** (exactly this name)
+   - **Description**: `Service connection for VRAI Data Analyzer`
+   - **Grant access permission to all pipelines**: ✅ **Check this box**
 7. Click **Save**
 
-**Note**: If automatic service principal creation fails (common in school accounts), use **Service principal (manual)** and contact your IT admin for help.
+**If Automatic Fails (Common in School Accounts):**
+
+**Option A: Service Principal (Manual) - Contact IT**
+1. Contact your IT administrator and request:
+   ```
+   Service Principal Details Needed:
+   - Application (client) ID
+   - Client secret (password)
+   - Tenant ID
+   - Subscription ID
+   ```
+2. Choose **Service principal (manual)**
+3. Enter the details provided by IT
+4. Name it exactly: **`AzureServiceConnection`**
+
+**Option B: Managed Identity (If Available)**
+1. Choose **Managed Identity**
+2. Select your subscription
+3. Name it exactly: **`AzureServiceConnection`**
+
+**⚠️ TROUBLESHOOTING:**
+- **Error "Insufficient privileges"**: Contact IT for permissions
+- **Error "Service principal creation failed"**: Use manual option above
+- **Can't see your subscription**: Verify you're logged in with correct account
+
+**✅ Verification:**
+After creating the service connection:
+1. Click on it to verify it shows "Ready to use"
+2. Test the connection by clicking **Verify**
+3. Ensure the name is exactly **`AzureServiceConnection`** (no spaces!)
 
 ### Step 4: Create Pipeline Environments
 
@@ -82,6 +132,25 @@ The pipeline will automatically create and manage:
    - `resourceGroup`: `rg-vrai-analyzer`
    - `location`: `East US`
    - `pythonVersion`: `3.12`
+
+### Step 6: Update Service Connection Name (If Different)
+
+If you created a service connection with a different name:
+
+1. Open `azure-pipelines.yml` in your repository
+2. Find this line:
+   ```yaml
+   - name: azureServiceConnection
+     value: 'AzureServiceConnection'  # Update this to match your service connection name
+   ```
+3. Change `'AzureServiceConnection'` to your actual service connection name
+4. Commit and push the change
+
+**Common Service Connection Names:**
+- `AzureServiceConnection` (recommended)
+- `Azure-Service-Connection`
+- `MyAzureConnection`
+- Your subscription name
 
 ## 🚀 Running the Pipeline
 

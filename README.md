@@ -44,7 +44,8 @@ GitHub Repository → Azure Pipelines → Azure App Service + Cosmos DB
 
 3. **Setup Service Connection**
    - Create Azure Resource Manager service connection
-   - Name it: `Azure Service Connection`
+   - Name it exactly: `AzureServiceConnection`
+   - Grant access to all pipelines
 
 4. **Create Environments**
    - Create `dev` and `prod` environments in Azure DevOps
