@@ -1,19 +1,337 @@
-# Starter pipeline
-# Start with a minimal pipeline that you can customize to build and deploy your code.
-# Add steps that build, run tests, deploy, and more:
-# https://aka.ms/yaml
+# Azure Pipelines for VRAI Data Analyzer
+# FastAPI application with Azure App Service deployment
 
 trigger:
-- main
+  branches:
+    include:
+    - main
+    - develop
+  paths:
+    exclude:
+    - README.md
+    - docs/*
 
-pool:
-  vmImage: ubuntu-latest
+variables:
+- name: pythonVersion
+  value: '3.12'
+- name: appServiceName
+  value: $[lower(format('vrai-analyzer-{0}', variables['environment']))]
+- name: resourceGroup
+  value: 'rg-vrai-analyzer'
+- name: location
+  value: 'East US'
+- name: cosmosDbName
+  value: $[lower(format('vrai-cosmos-{0}', variables['environment']))]
+- name: environment
+  value: $[replace(replace(variables['Build.SourceBranch'], 'refs/heads/main', 'prod'), 'refs/heads/develop', 'dev')]
 
-steps:
-- script: echo Hello, world!
-  displayName: 'Run a one-line script'
+stages:
+- stage: Build
+  displayName: 'Build and Test Application'
+  jobs:
+  - job: BuildTest
+    displayName: 'Build and Test'
+    pool:
+      vmImage: 'ubuntu-latest'
+    
+    steps:
+    - checkout: self
+      displayName: 'Checkout Source Code'
 
-- script: |
-    echo Add other tasks to build, test, and deploy your project.
-    echo See https://aka.ms/yaml
-  displayName: 'Run a multi-line script'
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(pythonVersion)'
+        addToPath: true
+        architecture: 'x64'
+      displayName: 'Set up Python $(pythonVersion)'
+
+    - script: |
+        python -m pip install --upgrade pip
+        pip install poetry
+        poetry --version
+      displayName: 'Install Poetry'
+
+    - script: |
+        poetry config virtualenvs.create true
+        poetry config virtualenvs.in-project true
+        poetry install --no-interaction --no-ansi
+      displayName: 'Install Dependencies'
+
+    - script: |
+        poetry run python -m pytest tests/ -v --tb=short --junitxml=test-results.xml --cov=src --cov-report=xml
+      displayName: 'Run Unit Tests'
+      continueOnError: false
+
+    - task: PublishTestResults@2
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFiles: 'test-results.xml'
+        testRunTitle: 'Python Unit Tests'
+        failTaskOnFailedTests: true
+      displayName: 'Publish Test Results'
+
+    - task: PublishCodeCoverageResults@1
+      condition: succeededOrFailed()
+      inputs:
+        codeCoverageTool: 'Cobertura'
+        summaryFileLocation: 'coverage.xml'
+      displayName: 'Publish Code Coverage'
+
+    - script: |
+        # Create requirements.txt for Azure App Service
+        poetry export --format requirements.txt --output requirements.txt --without-hashes --without dev
+        
+        # Verify requirements.txt
+        echo "Generated requirements.txt:"
+        cat requirements.txt
+      displayName: 'Generate Requirements File'
+
+    - script: |
+        # Create deployment package excluding unnecessary files
+        mkdir -p $(Build.ArtifactStagingDirectory)/app
+        
+        # Copy application files
+        cp -r src/ $(Build.ArtifactStagingDirectory)/app/
+        cp requirements.txt $(Build.ArtifactStagingDirectory)/app/
+        cp pyproject.toml $(Build.ArtifactStagingDirectory)/app/
+        
+        # Create startup script
+        echo "python -m uvicorn src.main:app --host 0.0.0.0 --port 8000" > $(Build.ArtifactStagingDirectory)/app/startup.txt
+        
+        # Show package contents
+        echo "Deployment package contents:"
+        ls -la $(Build.ArtifactStagingDirectory)/app/
+      displayName: 'Create Deployment Package'
+
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/app'
+        ArtifactName: 'python-app'
+        publishLocation: 'Container'
+      displayName: 'Publish Application Artifact'
+
+- stage: DeployInfrastructure
+  displayName: 'Deploy Azure Infrastructure'
+  dependsOn: Build
+  condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), eq(variables['Build.SourceBranch'], 'refs/heads/develop')))
+  jobs:
+  - deployment: DeployInfra
+    displayName: 'Deploy Infrastructure'
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: '$(environment)'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: none
+
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: 'Azure Service Connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "🚀 Starting infrastructure deployment for environment: $(environment)"
+                
+                # Set environment-specific variables
+                if [ "$(environment)" == "prod" ]; then
+                  APP_SERVICE_SKU="P1v2"
+                  COSMOS_TIER="Standard"
+                else
+                  APP_SERVICE_SKU="B1"
+                  COSMOS_TIER="Standard"
+                fi
+                
+                echo "Configuration:"
+                echo "- Environment: $(environment)"
+                echo "- Resource Group: $(resourceGroup)"
+                echo "- App Service SKU: $APP_SERVICE_SKU"
+                echo "- Location: $(location)"
+                
+                # Create resource group
+                echo "📁 Creating resource group..."
+                az group create \
+                  --name $(resourceGroup) \
+                  --location "$(location)" \
+                  --tags Environment=$(environment) Application=VRAI-DataAnalyzer
+                
+                # Create App Service Plan
+                echo "🏗️ Creating App Service Plan..."
+                az appservice plan create \
+                  --name $(appServiceName)-plan \
+                  --resource-group $(resourceGroup) \
+                  --location "$(location)" \
+                  --sku $APP_SERVICE_SKU \
+                  --is-linux \
+                  --tags Environment=$(environment)
+                
+                # Create App Service
+                echo "🌐 Creating App Service..."
+                az webapp create \
+                  --name $(appServiceName) \
+                  --resource-group $(resourceGroup) \
+                  --plan $(appServiceName)-plan \
+                  --runtime "PYTHON|3.12" \
+                  --tags Environment=$(environment)
+                
+                # Create Cosmos DB Account
+                echo "🗃️ Creating Cosmos DB Account..."
+                az cosmosdb create \
+                  --name $(cosmosDbName) \
+                  --resource-group $(resourceGroup) \
+                  --location "$(location)" \
+                  --capabilities EnableServerless \
+                  --default-consistency-level Session \
+                  --tags Environment=$(environment)
+                
+                # Create Cosmos DB Database
+                echo "📊 Creating Cosmos DB Database..."
+                az cosmosdb sql database create \
+                  --account-name $(cosmosDbName) \
+                  --resource-group $(resourceGroup) \
+                  --name data-analyzer
+                
+                # Create Cosmos DB Container
+                echo "📦 Creating Cosmos DB Container..."
+                az cosmosdb sql container create \
+                  --account-name $(cosmosDbName) \
+                  --resource-group $(resourceGroup) \
+                  --database-name data-analyzer \
+                  --name analysis-results \
+                  --partition-key-path "/id"
+                
+                # Create Application Insights
+                echo "📈 Creating Application Insights..."
+                az monitor app-insights component create \
+                  --app $(appServiceName)-insights \
+                  --location "$(location)" \
+                  --resource-group $(resourceGroup) \
+                  --application-type web \
+                  --tags Environment=$(environment)
+                
+                echo "✅ Infrastructure deployment completed!"
+            name: 'deployInfra'
+            displayName: 'Deploy Azure Resources'
+
+- stage: DeployApplication
+  displayName: 'Deploy Application'
+  dependsOn: 
+  - Build
+  - DeployInfrastructure
+  condition: succeeded()
+  jobs:
+  - deployment: DeployApp
+    displayName: 'Deploy FastAPI Application'
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: '$(environment)'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: python-app
+            displayName: 'Download Application Artifact'
+
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: 'Azure Service Connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "🚀 Starting application deployment..."
+                echo "App Service: $(appServiceName)"
+                echo "Resource Group: $(resourceGroup)"
+                
+                # Get Cosmos DB connection details
+                echo "🔗 Getting Cosmos DB connection details..."
+                COSMOS_ENDPOINT=$(az cosmosdb show \
+                  --name $(cosmosDbName) \
+                  --resource-group $(resourceGroup) \
+                  --query documentEndpoint \
+                  --output tsv)
+                
+                COSMOS_KEY=$(az cosmosdb keys list \
+                  --name $(cosmosDbName) \
+                  --resource-group $(resourceGroup) \
+                  --query primaryMasterKey \
+                  --output tsv)
+                
+                # Get Application Insights key
+                APPINSIGHTS_KEY=$(az monitor app-insights component show \
+                  --app $(appServiceName)-insights \
+                  --resource-group $(resourceGroup) \
+                  --query instrumentationKey \
+                  --output tsv)
+                
+                echo "🔧 Configuring App Service settings..."
+                # Configure App Service settings
+                az webapp config appsettings set \
+                  --name $(appServiceName) \
+                  --resource-group $(resourceGroup) \
+                  --settings \
+                    COSMOS_DB_ENDPOINT="$COSMOS_ENDPOINT" \
+                    COSMOS_DB_KEY="$COSMOS_KEY" \
+                    COSMOS_DB_DATABASE_NAME="data-analyzer" \
+                    COSMOS_DB_CONTAINER_NAME="analysis-results" \
+                    COSMOS_DB_VERIFY_SSL="true" \
+                    APPINSIGHTS_INSTRUMENTATIONKEY="$APPINSIGHTS_KEY" \
+                    SCM_DO_BUILD_DURING_DEPLOYMENT="true" \
+                    ENABLE_ORYX_BUILD="true" \
+                    PYTHON_VERSION="3.12"
+                
+                # Configure startup command
+                echo "⚙️ Setting startup command..."
+                az webapp config set \
+                  --name $(appServiceName) \
+                  --resource-group $(resourceGroup) \
+                  --startup-file "python -m uvicorn src.main:app --host 0.0.0.0 --port 8000"
+                
+                # Deploy application using zip deployment
+                echo "📦 Deploying application code..."
+                cd $(Pipeline.Workspace)/python-app
+                zip -r ../app.zip .
+                
+                az webapp deploy \
+                  --name $(appServiceName) \
+                  --resource-group $(resourceGroup) \
+                  --src-path ../app.zip \
+                  --type zip
+                
+                # Get application URL
+                APP_URL=$(az webapp show \
+                  --name $(appServiceName) \
+                  --resource-group $(resourceGroup) \
+                  --query defaultHostName \
+                  --output tsv)
+                
+                echo "🌐 Application URL: https://$APP_URL"
+                
+                # Wait for application to start
+                echo "⏳ Waiting for application to start..."
+                sleep 60
+                
+                # Health check
+                echo "🏥 Performing health check..."
+                for i in {1..10}; do
+                  HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$APP_URL/" || echo "000")
+                  if [ "$HTTP_STATUS" == "200" ]; then
+                    echo "✅ Health check passed! Application is running."
+                    break
+                  else
+                    echo "⏳ Attempt $i/10: HTTP $HTTP_STATUS - Application not ready yet..."
+                    if [ $i -eq 10 ]; then
+                      echo "❌ Health check failed after 10 attempts"
+                      exit 1
+                    fi
+                    sleep 30
+                  fi
+                done
+                
+                echo "🎉 Deployment completed successfully!"
+                echo "📍 Endpoints:"
+                echo "   Health: https://$APP_URL/"
+                echo "   API: https://$APP_URL/analyze"
+                echo "   Docs: https://$APP_URL/docs"
+            displayName: 'Configure and Deploy Application'
